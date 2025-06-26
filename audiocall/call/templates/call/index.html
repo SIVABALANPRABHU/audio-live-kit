@@ -1,0 +1,98 @@
+<!-- call/templates/call/index.html -->
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiveKit Audio Call</title>
+    <script src="{% static 'js/livekit-client.js' %}"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        #audio-container { margin-top: 20px; }
+        button { padding: 10px 20px; margin: 10px; font-size: 16px; }
+        #error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>LiveKit Audio Call</h1>
+    <input type="text" id="participantName" placeholder="Enter your name" value="user">
+    <button onclick="joinRoom()">Join Audio Call</button>
+    <button onclick="leaveRoom()" disabled>Leave Call</button>
+    <div id="audio-container"></div>
+    <div id="error"></div>
+
+    <script>
+        let room = null;
+
+        async function joinRoom() {
+            try {
+                const participantName = document.getElementById('participantName').value;
+                const response = await fetch(`/get-token/?participant=${participantName}`);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch token: ${response.statusText}`);
+                }
+                const data = await response.json();
+
+                room = new LivekitClient.Room();
+                await room.connect(data.livekit_url, data.token, {
+                    audio: true,
+                    video: false
+                });
+                console.log('Connected to room:', room.name);
+
+                const audioContainer = document.getElementById('audio-container');
+
+                // Function to attach audio tracks for a participant
+                const attachAudioTracks = (participant) => {
+                    participant.audioTracks.forEach(track => {
+                        const audioElement = track.audioTrack.attach();
+                        audioContainer.appendChild(audioElement);
+                    });
+                };
+
+                // Handle existing participants
+                if (room.participants && room.participants.size > 0) {
+                    room.participants.forEach(attachAudioTracks);
+                }
+
+                // Handle new participants
+                room.on('participantConnected', participant => {
+                    console.log('Participant connected:', participant.identity);
+                    attachAudioTracks(participant);
+                });
+
+                // Handle participant track subscriptions
+                room.on('trackSubscribed', (track, publication, participant) => {
+                    if (publication.kind === 'audio') {
+                        const audioElement = track.attach();
+                        audioContainer.appendChild(audioElement);
+                    }
+                });
+
+                // Update button states
+                document.querySelector('button[onclick="joinRoom()"]').disabled = true;
+                document.querySelector('button[onclick="leaveRoom()"]').disabled = false;
+            } catch (error) {
+                console.error('Connection failed:', error);
+                document.getElementById('error').innerText = `Error: ${error.message}`;
+            }
+        }
+
+        async function leaveRoom() {
+            try {
+                if (room) {
+                    await room.disconnect();
+                    document.getElementById('audio-container').innerHTML = '';
+                    document.querySelector('button[onclick="joinRoom()"]').disabled = false;
+                    document.querySelector('button[onclick="leaveRoom()"]').disabled = true;
+                    room = null;
+                }
+            } catch (error) {
+                console.error('Disconnect failed:', error);
+                document.getElementById('error').innerText = `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
