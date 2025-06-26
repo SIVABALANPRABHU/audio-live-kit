@@ -1,4 +1,3 @@
-<!-- call/templates/call/index.html -->
 {% load static %}
 <!DOCTYPE html>
 <html lang="en">
@@ -12,23 +11,36 @@
         #audio-container { margin-top: 20px; }
         button { padding: 10px 20px; margin: 10px; font-size: 16px; }
         #error { color: red; }
+        #room-info { margin-top: 20px; }
+        #participants { list-style: none; padding: 0; }
+        #participants li { margin: 5px 0; }
+        .muted { color: gray; }
     </style>
 </head>
 <body>
     <h1>LiveKit Audio Call</h1>
+    <input type="text" id="roomName" placeholder="Enter room name" value="audio-room">
     <input type="text" id="participantName" placeholder="Enter your name" value="user">
     <button onclick="joinRoom()">Join Audio Call</button>
     <button onclick="leaveRoom()" disabled>Leave Call</button>
+    <button onclick="toggleMute()" disabled id="muteButton">Mute</button>
     <div id="audio-container"></div>
     <div id="error"></div>
+    <div id="room-info">
+        <h3>Active Room: <span id="active-room">None</span></h3>
+        <h3>Participants:</h3>
+        <ul id="participants"></ul>
+    </div>
 
     <script>
         let room = null;
+        let isMuted = false;
 
         async function joinRoom() {
             try {
+                const roomName = document.getElementById('roomName').value;
                 const participantName = document.getElementById('participantName').value;
-                const response = await fetch(`/get-token/?participant=${participantName}`);
+                const response = await fetch(`/get-token/?room=${roomName}&participant=${participantName}`);
                 if (!response.ok) {
                     throw new Error(`Failed to fetch token: ${response.statusText}`);
                 }
@@ -41,34 +53,104 @@
                 });
                 console.log('Connected to room:', room.name);
 
-                const audioContainer = document.getElementById('audio-container');
+                // Explicitly publish local audio track
+                try {
+                    const audioTrack = await room.localParticipant.setMicrophoneEnabled(true);
+                    console.log('Local audio track published:', audioTrack);
+                } catch (err) {
+                    console.error('Failed to publish audio track:', err);
+                    throw new Error(`Failed to publish audio track: ${err.message}`);
+                }
 
-                // Function to attach audio tracks for a participant
+                // Update UI with room name
+                document.getElementById('active-room').innerText = room.name;
+
+                const audioContainer = document.getElementById('audio-container');
+                const participantsList = document.getElementById('participants');
+
+                // Function to update participants list with audio status
+                const updateParticipants = () => {
+                    participantsList.innerHTML = '';
+                    if (room.participants && room.participants.size > 0) {
+                        room.participants.forEach(participant => {
+                            const li = document.createElement('li');
+                            const isAudioMuted = !participant.audioTracks || participant.audioTracks.size === 0 || 
+                                Array.from(participant.audioTracks.values()).every(track => track.isMuted);
+                            li.innerText = `${participant.identity}${isAudioMuted ? ' (Muted or No Audio)' : ''}`;
+                            if (isAudioMuted) li.classList.add('muted');
+                            participantsList.appendChild(li);
+                        });
+                    }
+                    // Add local participant
+                    const localLi = document.createElement('li');
+                    const localAudioMuted = !room.localParticipant.audioTracks || 
+                        room.localParticipant.audioTracks.size === 0 || 
+                        Array.from(room.localParticipant.audioTracks.values()).every(track => track.isMuted);
+                    localLi.innerText = `${room.localParticipant.identity} (You)${localAudioMuted ? ' (Muted or No Audio)' : ''}`;
+                    if (localAudioMuted) localLi.classList.add('muted');
+                    participantsList.appendChild(localLi);
+                };
+
+                // Function to attach audio tracks
                 const attachAudioTracks = (participant) => {
-                    participant.audioTracks.forEach(track => {
-                        const audioElement = track.audioTrack.attach();
-                        audioContainer.appendChild(audioElement);
-                    });
+                    if (participant.audioTracks && participant.audioTracks.size > 0) {
+                        participant.audioTracks.forEach(track => {
+                            const audioElement = track.audioTrack.attach();
+                            audioContainer.appendChild(audioElement);
+                            console.log(`Attached audio track for ${participant.identity}`);
+                        });
+                    } else {
+                        console.log(`No audio tracks for ${participant.identity}`);
+                    }
                 };
 
                 // Handle existing participants
                 if (room.participants && room.participants.size > 0) {
                     room.participants.forEach(attachAudioTracks);
                 }
+                updateParticipants();
 
                 // Handle new participants
                 room.on('participantConnected', participant => {
                     console.log('Participant connected:', participant.identity);
                     attachAudioTracks(participant);
+                    updateParticipants();
                 });
 
-                // Handle participant track subscriptions
+                // Handle participant disconnections
+                room.on('participantDisconnected', participant => {
+                    console.log('Participant disconnected:', participant.identity);
+                    updateParticipants();
+                });
+
+                // Handle track subscriptions
                 room.on('trackSubscribed', (track, publication, participant) => {
                     if (publication.kind === 'audio') {
                         const audioElement = track.attach();
                         audioContainer.appendChild(audioElement);
+                        console.log(`Subscribed to audio track from ${participant.identity}`);
+                        updateParticipants();
                     }
                 });
+
+                // Handle track mute/unmute
+                room.on('trackMuted', (publication, participant) => {
+                    console.log(`${participant.identity}'s track muted`);
+                    updateParticipants();
+                });
+                room.on('trackUnmuted', (publication, participant) => {
+                    console.log(`${participant.identity}'s track unmuted`);
+                    updateParticipants();
+                });
+
+                // Handle local track publication
+                room.on('localTrackPublished', (track, publication) => {
+                    console.log(`Local track published: ${publication.kind}`);
+                    updateParticipants();
+                });
+
+                // Enable mute button
+                document.getElementById('muteButton').disabled = false;
 
                 // Update button states
                 document.querySelector('button[onclick="joinRoom()"]').disabled = true;
@@ -84,12 +166,42 @@
                 if (room) {
                     await room.disconnect();
                     document.getElementById('audio-container').innerHTML = '';
+                    document.getElementById('active-room').innerText = 'None';
+                    document.getElementById('participants').innerHTML = '';
                     document.querySelector('button[onclick="joinRoom()"]').disabled = false;
                     document.querySelector('button[onclick="leaveRoom()"]').disabled = true;
+                    document.getElementById('muteButton').disabled = true;
                     room = null;
+                    isMuted = false;
+                    document.getElementById('muteButton').innerText = 'Mute';
                 }
             } catch (error) {
                 console.error('Disconnect failed:', error);
+                document.getElementById('error').innerText = `Error: ${error.message}`;
+            }
+        }
+
+        async function toggleMute() {
+            try {
+                if (!room) return;
+                isMuted = !isMuted;
+                const localAudioTracks = room.localParticipant.audioTracks;
+                if (localAudioTracks && localAudioTracks.size > 0) {
+                    localAudioTracks.forEach(track => {
+                        if (isMuted) {
+                            track.track.mute();
+                        } else {
+                            track.track.unmute();
+                        }
+                    });
+                    document.getElementById('muteButton').innerText = isMuted ? 'Unmute' : 'Mute';
+                    updateParticipants();
+                } else {
+                    console.error('No local audio tracks to mute/unmute');
+                    document.getElementById('error').innerText = 'Error: No audio tracks available';
+                }
+            } catch (error) {
+                console.error('Mute toggle failed:', error);
                 document.getElementById('error').innerText = `Error: ${error.message}`;
             }
         }
