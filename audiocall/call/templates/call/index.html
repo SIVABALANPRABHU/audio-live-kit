@@ -36,6 +36,91 @@
         let room = null;
         let isMuted = false;
 
+        // Update participants list with audio status
+        const updateParticipants = () => {
+            const participantsList = document.getElementById('participants');
+            participantsList.innerHTML = '';
+            const participants = (room && room.getParticipants) ? room.getParticipants() : [];
+            participants.forEach(participant => {
+                const li = document.createElement('li');
+                const tracks = participant.getTrackPublications ? Array.from(participant.getTrackPublications()) : [];
+                const isAudioMuted = tracks.length === 0 || tracks.every(track => track.isMuted);
+                li.innerText = `${participant.identity}${isAudioMuted ? ' (Muted)' : ''}`;
+                if (isAudioMuted) li.classList.add('muted');
+                participantsList.appendChild(li);
+                console.log(`Participant in UI: ${participant.identity}, SID: ${participant.sid}, muted: ${isAudioMuted}, tracks: ${tracks.length}, trackSIDs: ${tracks.map(t => t.trackSid).join(', ')}`);
+            });
+            if (room && room.localParticipant) {
+                const localLi = document.createElement('li');
+                const localTracks = room.localParticipant.getTrackPublications ? Array.from(room.localParticipant.getTrackPublications()) : [];
+                const localAudioMuted = localTracks.length === 0 || localTracks.every(track => track.isMuted);
+                localLi.innerText = `${room.localParticipant.identity} (You)${localAudioMuted ? ' (Muted)' : ''}`;
+                if (localAudioMuted) localLi.classList.add('muted');
+                participantsList.appendChild(localLi);
+                console.log(`Local participant in UI: ${room.localParticipant.identity}, muted: ${localAudioMuted}, tracks: ${localTracks.length}, trackSIDs: ${localTracks.map(t => t.trackSid).join(', ')}`);
+            }
+        };
+
+        // Attach audio tracks for a participant
+        const attachAudioTracks = (participant) => {
+            const tracks = participant.getTrackPublications ? Array.from(participant.getTrackPublications()) : [];
+            if (tracks.length > 0) {
+                tracks.forEach(publication => {
+                    if (publication.kind === 'audio' && publication.track && !publication.isMuted && !document.getElementById(`audio-${participant.sid}-${publication.trackSid}`)) {
+                        const audioElement = publication.track.attach();
+                        audioElement.id = `audio-${participant.sid}-${publication.trackSid}`;
+                        document.getElementById('audio-container').appendChild(audioElement);
+                        audioElement.play().catch(err => console.error(`Failed to play audio for ${participant.identity}, trackSid: ${publication.trackSid}:`, err));
+                        console.log(`Attached audio track for ${participant.identity}, trackSid: ${publication.trackSid}`);
+                    } else {
+                        console.log(`Skipping attachment for ${participant.identity}, trackSid: ${publication.trackSid}, kind: ${publication.kind}, isMuted: ${publication.isMuted}, already attached: ${!!document.getElementById(`audio-${participant.sid}-${publication.trackSid}`)}`);
+                    }
+                });
+            } else {
+                console.log(`No audio tracks to attach for ${participant ? participant.identity : 'unknown'}, tracks: ${tracks.length}`);
+            }
+        };
+
+        // Detach audio tracks for a participant
+        const detachAudioTracks = (participant) => {
+            const tracks = participant.getTrackPublications ? Array.from(participant.getTrackPublications()) : [];
+            tracks.forEach(publication => {
+                const audioElement = document.getElementById(`audio-${participant.sid}-${publication.trackSid}`);
+                if (audioElement) {
+                    audioElement.remove();
+                    console.log(`Detached audio track for ${participant.identity}, trackSid: ${publication.trackSid}`);
+                }
+            });
+        };
+
+        // Subscribe to and attach existing tracks
+        const subscribeToExistingTracks = () => {
+            if (room && room.state === 'connected') {
+                console.log('Checking existing participants for tracks...');
+                const participants = (room.getParticipants && room.getParticipants()) || (room.participants ? Array.from(room.participants.values()) : []);
+                console.log('Participants found:', participants.map(p => p.identity));
+                participants.forEach(participant => {
+                    console.log(`Processing existing participant: ${participant.identity}, SID: ${participant.sid}`);
+                    const tracks = participant.getTrackPublications ? Array.from(participant.getTrackPublications()) : [];
+                    tracks.forEach(publication => {
+                        if (publication.kind === 'audio') {
+                            console.log(`Found track for ${participant.identity}, trackSid: ${publication.trackSid}, isSubscribed: ${publication.isSubscribed}, isMuted: ${publication.isMuted}`);
+                            if (publication.track && !publication.isSubscribed) {
+                                console.log(`Subscribing to track for ${participant.identity}, trackSid: ${publication.trackSid}`);
+                                publication.setSubscribed(true);
+                            }
+                            attachAudioTracks(participant);
+                        }
+                    });
+                    if (tracks.length === 0) {
+                        console.log(`No audio tracks for ${participant.identity}`);
+                    }
+                });
+            } else {
+                console.log('Room not connected or no participants, state:', room ? room.state : 'no room');
+            }
+        };
+
         async function joinRoom() {
             try {
                 const roomName = document.getElementById('roomName').value;
@@ -62,93 +147,6 @@
 
                 // Update UI with room name
                 document.getElementById('active-room').innerText = room.name;
-
-                const audioContainer = document.getElementById('audio-container');
-                const participantsList = document.getElementById('participants');
-
-                // Update participants list with audio status
-                const updateParticipants = () => {
-                    participantsList.innerHTML = '';
-                    const participants = (room && room.getParticipants) ? room.getParticipants() : [];
-                    participants.forEach(participant => {
-                        const li = document.createElement('li');
-                        const tracks = participant.getTrackPublications ? Array.from(participant.getTrackPublications()) : [];
-                        const isAudioMuted = tracks.length === 0 || tracks.every(track => track.isMuted);
-                        li.innerText = `${participant.identity}${isAudioMuted ? ' (Muted)' : ''}`;
-                        if (isAudioMuted) li.classList.add('muted');
-                        participantsList.appendChild(li);
-                        console.log(`Participant in UI: ${participant.identity}, SID: ${participant.sid}, muted: ${isAudioMuted}, tracks: ${tracks.length}, trackSIDs: ${tracks.map(t => t.trackSid).join(', ')}`);
-                    });
-                    if (room && room.localParticipant) {
-                        const localLi = document.createElement('li');
-                        const localTracks = room.localParticipant.getTrackPublications ? Array.from(room.localParticipant.getTrackPublications()) : [];
-                        const localAudioMuted = localTracks.length === 0 || localTracks.every(track => track.isMuted);
-                        localLi.innerText = `${room.localParticipant.identity} (You)${localAudioMuted ? ' (Muted)' : ''}`;
-                        if (localAudioMuted) localLi.classList.add('muted');
-                        participantsList.appendChild(localLi);
-                        console.log(`Local participant in UI: ${room.localParticipant.identity}, muted: ${localAudioMuted}, tracks: ${localTracks.length}, trackSIDs: ${localTracks.map(t => t.trackSid).join(', ')}`);
-                    }
-                };
-
-                // Attach audio tracks for a participant
-                const attachAudioTracks = (participant) => {
-                    const tracks = participant.getTrackPublications ? Array.from(participant.getTrackPublications()) : [];
-                    if (tracks.length > 0) {
-                        tracks.forEach(publication => {
-                            if (publication.kind === 'audio' && publication.track && !publication.isMuted && !document.getElementById(`audio-${participant.sid}-${publication.trackSid}`)) {
-                                const audioElement = publication.track.attach();
-                                audioElement.id = `audio-${participant.sid}-${publication.trackSid}`;
-                                audioContainer.appendChild(audioElement);
-                                audioElement.play().catch(err => console.error(`Failed to play audio for ${participant.identity}, trackSid: ${publication.trackSid}:`, err));
-                                console.log(`Attached audio track for ${participant.identity}, trackSid: ${publication.trackSid}`);
-                            } else {
-                                console.log(`Skipping attachment for ${participant.identity}, trackSid: ${publication.trackSid}, kind: ${publication.kind}, isMuted: ${publication.isMuted}, already attached: ${!!document.getElementById(`audio-${participant.sid}-${publication.trackSid}`)}`);
-                            }
-                        });
-                    } else {
-                        console.log(`No audio tracks to attach for ${participant ? participant.identity : 'unknown'}, tracks: ${tracks.length}`);
-                    }
-                };
-
-                // Detach audio tracks for a participant
-                const detachAudioTracks = (participant) => {
-                    const tracks = participant.getTrackPublications ? Array.from(participant.getTrackPublications()) : [];
-                    tracks.forEach(publication => {
-                        const audioElement = document.getElementById(`audio-${participant.sid}-${publication.trackSid}`);
-                        if (audioElement) {
-                            audioElement.remove();
-                            console.log(`Detached audio track for ${participant.identity}, trackSid: ${publication.trackSid}`);
-                        }
-                    });
-                };
-
-                // Subscribe to and attach existing tracks
-                const subscribeToExistingTracks = () => {
-                    if (room && room.state === 'connected') {
-                        console.log('Checking existing participants for tracks...');
-                        const participants = (room.getParticipants && room.getParticipants()) || (room.participants ? Array.from(room.participants.values()) : []);
-                        console.log('Participants found:', participants.map(p => p.identity));
-                        participants.forEach(participant => {
-                            console.log(`Processing existing participant: ${participant.identity}, SID: ${participant.sid}`);
-                            const tracks = participant.getTrackPublications ? Array.from(participant.getTrackPublications()) : [];
-                            tracks.forEach(publication => {
-                                if (publication.kind === 'audio') {
-                                    console.log(`Found track for ${participant.identity}, trackSid: ${publication.trackSid}, isSubscribed: ${publication.isSubscribed}, isMuted: ${publication.isMuted}`);
-                                    if (publication.track && !publication.isSubscribed) {
-                                        console.log(`Subscribing to track for ${participant.identity}, trackSid: ${publication.trackSid}`);
-                                        publication.setSubscribed(true);
-                                    }
-                                    attachAudioTracks(participant);
-                                }
-                            });
-                            if (tracks.length === 0) {
-                                console.log(`No audio tracks for ${participant.identity}`);
-                            }
-                        });
-                    } else {
-                        console.log('Room not connected or no participants, state:', room ? room.state : 'no room');
-                    }
-                };
 
                 // Handle existing participants and their tracks
                 if (room.state === 'connected') {
@@ -203,7 +201,7 @@
                     if (publication.kind === 'audio') {
                         const audioElement = track.attach();
                         audioElement.id = `audio-${participant.sid}-${publication.trackSid}`;
-                        audioContainer.appendChild(audioElement);
+                        document.getElementById('audio-container').appendChild(audioElement);
                         audioElement.play().catch(err => console.error(`Failed to play audio for ${participant.identity}, trackSid: ${publication.trackSid}:`, err));
                         console.log(`Subscribed to audio track from ${participant.identity}, trackSid: ${publication.trackSid}`);
                         updateParticipants();
