@@ -28,7 +28,7 @@
     </div>
     <button onclick="joinRoom()">Join Audio Call</button>
     <button onclick="leaveRoom()" disabled>Leave Call</button>
-    <button onclick="toggleMute()" disabled id="muteButton">Mute</button>
+    <button onclick="toggleMute()" disabled id="muteButton">Unmute</button>
     <div id="audio-container"></div>
     <div id="error"></div>
     <div id="room-info">
@@ -39,7 +39,7 @@
 
     <script>
         let room = null;
-        let isMuted = false;
+        let isMuted = true; // Default to muted
         let selectedAudioDeviceId = null;
 
         // Populate audio input devices
@@ -153,6 +153,7 @@
             });
         };
 
+        
         // Subscribe to existing tracks
         const subscribeToExistingTracks = () => {
             if (room && room.state === 'connected') {
@@ -195,9 +196,7 @@
                 });
                 console.log('Connected to room:', room.name);
 
-                await room.localParticipant.setMicrophoneEnabled(true);
-                console.log('Local audio published');
-
+                // Microphone is muted by default, no need to enable it here
                 document.getElementById('active-room').innerText = room.name;
                 subscribeToExistingTracks();
                 updateParticipants();
@@ -255,6 +254,7 @@
                 document.querySelector('button[onclick="joinRoom()"]').disabled = true;
                 document.querySelector('button[onclick="leaveRoom()"]').disabled = false;
                 document.getElementById('muteButton').disabled = false;
+                document.getElementById('muteButton').innerText = 'Unmute'; // Reflect default muted state
             } catch (error) {
                 console.error('Connection failed:', error);
                 document.getElementById('error').innerText = `Error: ${error.message}`;
@@ -271,9 +271,9 @@
                     document.querySelector('button[onclick="joinRoom()"]').disabled = false;
                     document.querySelector('button[onclick="leaveRoom()"]').disabled = true;
                     document.getElementById('muteButton').disabled = true;
-                    document.getElementById('muteButton').innerText = 'Mute';
+                    document.getElementById('muteButton').innerText = 'Unmute'; // Reset to Unmute
                     room = null;
-                    isMuted = false;
+                    isMuted = true; // Reset to muted
                 }
             } catch (error) {
                 console.error('Disconnect failed:', error);
